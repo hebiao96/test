@@ -214,10 +214,8 @@ volatile uint8_t g_ymodem_busy = 0;
 
 int fputc(int ch, FILE *f)
 {
-    /* Ymodem传输期间也输出日志，但使用短超时避免阻塞 */
-    if (g_ymodem_busy) {
-        HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 5);
-    } else {
+    /* 传输期间不输出调试日志，避免 printf 阻塞导致 Ymodem 超时 */
+    if (!g_ymodem_busy) {
         HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 1000);
     }
     return ch;
