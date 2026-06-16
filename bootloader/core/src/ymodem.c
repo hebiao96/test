@@ -145,9 +145,6 @@ YmodemStatus Ymodem_ReceiveFile(YmodemFileInfo *file_info)
     
     /* 主状态机循环 */
     while (ctx.state != YMODEM_STATE_COMPLETE && ctx.state != YMODEM_STATE_ERROR) {
-        LOGD(TAG, "=== State: %d, Expected packet: %d, Retry: %u ===", 
-             ctx.state, ctx.expected_packet, ctx.retry_count);
-        
         /* 接收数据包 */
         status = Ymodem_ReceivePacket(&ctx);
         
@@ -224,8 +221,6 @@ YmodemStatus Ymodem_ReceiveFile(YmodemFileInfo *file_info)
  */
 static void Ymodem_SendChar(uint8_t c)
 {
-    LOGD(TAG, "TX: 0x%02X", c);
-    //IAP_CAN_SendByte(c);
     IAP_UART_SendByte(c);
 }
 
@@ -242,13 +237,10 @@ static YmodemStatus Ymodem_ReceiveChar(uint8_t *c, uint32_t timeout)
             {
                 return YMODEM_OK;
             } else {
-                LOGE(TAG, "RX error or timeout");
                 return YMODEM_TIMEOUT;
             }
         }
     }
-    
-    LOGE(TAG, "RX timeout after %u ms", IAP_Core_GetTick() - start_time);
     return YMODEM_TIMEOUT;
 }
 
@@ -271,12 +263,8 @@ static uint16_t Ymodem_CRC16(const uint8_t *data, uint16_t length)
  */
 static void Ymodem_FlushInput(void)
 {
-    uint16_t bytes_discarded = IAP_UART_GetAvailableBytes();
     IAP_UART_ClearBuffer();
-    if (bytes_discarded > 0) {
-        LOGD(TAG, "Input buffer flushed (%u bytes discarded)", bytes_discarded);
-    }
-} 
+}
 
 /* =============================================================================
  * 私有函数实现 - 协议处理
@@ -293,8 +281,6 @@ static YmodemStatus Ymodem_ReceivePacket(YmodemContext *ctx)
     YmodemStatus status;
     uint16_t i;
     
-    LOGD(TAG, "Starting packet reception...");
-
     /* 接收包头，跳过0x00噪声字节 */
     {
         uint32_t hdr_start = IAP_Core_GetTick();
@@ -322,8 +308,6 @@ static YmodemStatus Ymodem_ReceivePacket(YmodemContext *ctx)
     
     /* 确定包大小 */
     ctx->packet_size = (header == SOH) ? YMODEM_PACKET_128 : YMODEM_PACKET_1024;
-    LOGD(TAG, "Packet type: %s (%d bytes)", 
-         (header == SOH) ? "SOH" : "STX", ctx->packet_size);
     
     /* 接收包序号 */
     status = Ymodem_ReceiveChar(&pkt_num, 500);
@@ -345,19 +329,13 @@ static YmodemStatus Ymodem_ReceivePacket(YmodemContext *ctx)
     }
     
     ctx->packet_number = pkt_num;
-    LOGD(TAG, "Packet number: %d", pkt_num);
     
     /* 接收数据 */
-    LOGD(TAG, "Receiving %d bytes of data...", ctx->packet_size);
     for (i = 0; i < ctx->packet_size; i++) {
         status = Ymodem_ReceiveChar(&ctx->packet_data[i], 200);
         if (status != YMODEM_OK) {
             LOGE(TAG, "Data reception failed at byte %d", i);
             return status;
-        }
-        
-        if ((i + 1) % 64 == 0) {
-            LOGD(TAG, "Received %d/%d bytes", i + 1, ctx->packet_size);
         }
     }
     
@@ -385,8 +363,7 @@ static YmodemStatus Ymodem_ReceivePacket(YmodemContext *ctx)
         return YMODEM_ERROR;
     }
     
-    LOGD(TAG, "Packet received successfully: num=%d, size=%d, CRC=0x%04X", 
-         pkt_num, ctx->packet_size, crc_received);
+    LOGD(TAG, "Packet #%d OK: size=%d, CRC=0x%04X", pkt_num, ctx->packet_size, crc_received);
     return YMODEM_OK;
 }
 
@@ -521,7 +498,17 @@ static YmodemStatus Ymodem_ParseFileInfo(uint8_t *packet, YmodemFileInfo *file_i
     
     /* 解析文件大小 */
     filesize_ptr = filename_ptr + strlen(filename_ptr) + 1;
-    file_info->filesize = atol(filesize_ptr);
+    LOGI(TAG, "Filesize str: '%s'", filesize_ptr);
+    
+    /* 手动解析文件大小，避免 atol 在嵌入式环境中的问题 */
+    file_info->filesize = 0;
+    {
+        char *p = filesize_ptr;
+        while (*p >= '0' && *p <= '9') {
+            file_info->filesize = file_info->filesize * 10 + (uint32_t)(*p - '0');
+            p++;
+        }
+    }
     LOGI(TAG, "File size: %u bytes", file_info->filesize);
     
     /* 验证文件大小 */
